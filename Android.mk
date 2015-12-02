@@ -15,19 +15,19 @@
 # limitations under the License.
 #
 
-ifeq ($(TARGET_BOARD_PLATFORM),exynos5)
-ifeq ($(TARGET_SLSI_VARIANT),)
+ifeq ($(TARGET_BOARD_PLATFORM),exynos3)
+#ifeq ($(TARGET_SLSI_VARIANT),)
 
 exynos5_dirs := \
 	libion_exynos \
-	libexynosutils \
+#	libexynosutils \
 	exynos_omx \
-	libcsc \
+#	libcsc \
 	libgscaler \
 	librotator \
-	libstagefrighthw \
+#	libstagefrighthw \
 	libswconverter \
-	libv4l2 \
+#	libv4l2 \
 	libhwjpeg \
 	libhwc \
 	libcamera2 \
@@ -35,6 +35,11 @@ exynos5_dirs := \
 	libkeymaster \
 	gralloc \
 	libsecurepath
+
+exynos3_dirs := \
+        gralloc \
+        libion_exynos \
+        libmemtrack
 
 BOARD_USE_V4L2 := true
 BOARD_USE_V4L2_ION := true
@@ -59,7 +64,7 @@ BOARD_USE_EXYNOS_OMX := true
 USE_HWC_CSC_THREAD := true
 
 
-include $(call all-named-subdir-makefiles,$(exynos5_dirs))
+include $(call all-named-subdir-makefiles,$(exynos3_dirs))
 
-endif
+#endif
 endif
