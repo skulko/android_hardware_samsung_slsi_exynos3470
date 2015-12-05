@@ -36,7 +36,7 @@
  * Return the linear address from tiled position (x, y) */
 unsigned int Tile2D_To_Linear(
     unsigned int width,
-    unsigned int height,
+    unsigned int height __unused,
     unsigned int xpos,
     unsigned int ypos,
     int crFlag)
@@ -405,10 +405,10 @@ void csc_tiled_to_linear_uv_deinterleave(
  *
  */
 void csc_linear_to_tiled_y(
-    unsigned char *y_dst,
-    unsigned char *y_src,
-    unsigned int width,
-    unsigned int height)
+    unsigned char *y_dst __unused,
+    unsigned char *y_src __unused,
+    unsigned int width __unused,
+    unsigned int height __unused)
 {
 
 }
@@ -435,11 +435,11 @@ void csc_linear_to_tiled_y(
  *
  */
 void csc_linear_to_tiled_uv(
-    unsigned char *uv_dst,
-    unsigned char *u_src,
-    unsigned char *v_src,
-    unsigned int width,
-    unsigned int height)
+    unsigned char *uv_dst __unused,
+    unsigned char *u_src __unused,
+    unsigned char *v_src __unused,
+    unsigned int width __unused,
+    unsigned int height __unused)
 {
 
 }
