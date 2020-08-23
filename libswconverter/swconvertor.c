@@ -28,6 +28,7 @@
  *   2012.02.01 : Create
  */
 
+#include <string.h>
 #include "stdio.h"
 #include "stdlib.h"
 #include "swconverter.h"
@@ -447,8 +448,8 @@ void csc_linear_to_tiled_uv(
 void Tile2D_To_YUV420(unsigned char *Y_plane, unsigned char *Cb_plane, unsigned char *Cr_plane,
                         unsigned int y_addr, unsigned int c_addr, unsigned int width, unsigned int height)
 {
-    int x, y, j, k, l;
-    int out_of_width, actual_width;
+    unsigned int x, y, j, k, l;
+    unsigned int out_of_width, actual_width;
     unsigned int base_addr, data;
 
     // y: 0, 16, 32, ...
@@ -517,7 +518,7 @@ void csc_RGB565_to_YUV420P(
     int width,
     int height)
 {
-    unsigned int i, j;
+    int i, j;
     unsigned int tmp;
 
     unsigned int R, G, B;
@@ -591,7 +592,7 @@ void csc_RGB565_to_YUV420SP(
     int width,
     int height)
 {
-    unsigned int i, j;
+    int i, j;
     unsigned int tmp;
 
     unsigned int R, G, B;

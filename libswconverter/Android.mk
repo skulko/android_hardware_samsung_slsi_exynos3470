@@ -13,7 +13,8 @@ LOCAL_SRC_FILES_arm += \
 	csc_tiled_to_linear_uv_neon.s \
 	csc_tiled_to_linear_uv_deinterleave_neon.s \
 	csc_interleave_memcpy_neon.s \
-	csc_ARGB8888_to_YUV420SP_NEON.s
+	csc_ARGB8888_to_YUV420SP_NEON.s \
+        csc_ARGB8888_to_ABGR8888.s
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/../exynos_omx/openmax/include/khronos \
