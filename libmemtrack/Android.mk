@@ -23,10 +23,15 @@ LOCAL_C_INCLUDES += hardware/libhardware/include
 LOCAL_SHARED_LIBRARIES := liblog
 LOCAL_SRC_FILES := memtrack_exynos5.c ion.c
 LOCAL_MODULE := memtrack.exynos5
+LOCAL_PROPRIETARY_MODULE := true
 
-ifneq ($(TARGET_SOC),exynos5410)
+ifneq ($(TARGET_SOC),exynos3470)
 LOCAL_CFLAGS += -DTRACK_MALI_MEMORY
 LOCAL_SRC_FILES += mali.c
 endif
+
+LOCAL_CFLAGS += -Wno-gnu-designator
+LOCAL_CFLAGS += -Wno-unused-parameter
+LOCAL_CFLAGS += -Wno-unused-variable
 
 include $(BUILD_SHARED_LIBRARY)
