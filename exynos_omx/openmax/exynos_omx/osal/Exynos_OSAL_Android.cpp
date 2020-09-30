@@ -37,18 +37,21 @@
 #include <hardware/hardware.h>
 #include <media/hardware/OMXPluginBase.h>
 #include <media/hardware/MetadataBufferType.h>
+#ifdef USE_DMA_BUF
 #include <gralloc_priv.h>
+#endif
 
 #include "Exynos_OSAL_Mutex.h"
 #include "Exynos_OSAL_Semaphore.h"
 #include "Exynos_OMX_Baseport.h"
 #include "Exynos_OMX_Basecomponent.h"
 #include "Exynos_OMX_Macros.h"
-#include "Exynos_OMX_Vdec.h"
-#include "Exynos_OMX_Venc.h"
 #include "Exynos_OSAL_Android.h"
+#include "Exynos_OSAL_ETC.h"
 #include "exynos_format.h"
 #include "ion.h"
+
+#include "ExynosVideoApi.h"
 
 #undef  EXYNOS_LOG_TAG
 #define EXYNOS_LOG_TAG    "Exynos_OSAL_Android"
@@ -61,11 +64,15 @@ using namespace android;
 extern "C" {
 #endif
 
+static int lockCnt = 0;
+
+#ifdef USE_ANB_REF
 int getIonFd(gralloc_module_t const *module)
 {
     private_module_t* m = const_cast<private_module_t*>(reinterpret_cast<const private_module_t*>(module));
     return m->ionfd;
 }
+#endif
 
 OMX_ERRORTYPE Exynos_OSAL_LockANBHandle(
     OMX_IN OMX_U32 handle,
@@ -79,8 +86,10 @@ OMX_ERRORTYPE Exynos_OSAL_LockANBHandle(
 
     OMX_ERRORTYPE ret = OMX_ErrorNone;
     GraphicBufferMapper &mapper = GraphicBufferMapper::get();
-    buffer_handle_t bufferHandle = (buffer_handle_t) handle;
+    buffer_handle_t bufferHandle = (buffer_handle_t)(uintptr_t) handle;
+#ifdef USE_DMA_BUF
     private_handle_t *priv_hnd = (private_handle_t *) bufferHandle;
+#endif
     Rect bounds((uint32_t)width, (uint32_t)height);
     ExynosVideoPlane *vplanes = (ExynosVideoPlane *) planes;
     void *vaddr[MAX_BUFFER_PLANE];
@@ -88,13 +97,27 @@ OMX_ERRORTYPE Exynos_OSAL_LockANBHandle(
     Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "%s: handle: 0x%x", __func__, handle);
 
     int usage = 0;
-
-    switch (format) {
+    switch ((int)format) {
     case OMX_COLOR_FormatYUV420Planar:
     case OMX_COLOR_FormatYUV420SemiPlanar:
     case OMX_SEC_COLOR_FormatNV12Tiled:
         usage = GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN;
         break;
+#ifdef USE_ANDROIDOPAQUE
+    case OMX_COLOR_FormatAndroidOpaque:
+    {
+        OMX_COLOR_FORMATTYPE formatType;
+#ifdef USE_DMA_BUF
+        formatType = Exynos_OSAL_GetANBColorFormat((OMX_U32)(uintptr_t)priv_hnd);
+        if ((formatType == OMX_COLOR_FormatYUV420SemiPlanar) ||
+            (formatType == (OMX_COLOR_FORMATTYPE)OMX_SEC_COLOR_FormatNV12Tiled))
+            usage = GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN;
+        else
+#endif
+            usage = GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN | GRALLOC_USAGE_HW_VIDEO_ENCODER;
+    }
+        break;
+#endif
     default:
         usage = GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN;
         break;
@@ -105,18 +128,22 @@ OMX_ERRORTYPE Exynos_OSAL_LockANBHandle(
         ret = OMX_ErrorUndefined;
         goto EXIT;
     }
+    lockCnt++;
+    Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "%s: lockCnt:%d", __func__, lockCnt);
 
+#ifdef USE_DMA_BUF
     vplanes[0].fd = priv_hnd->fd;
     vplanes[0].offset = 0;
-    vplanes[0].addr = vaddr[0];
     vplanes[1].fd = priv_hnd->fd1;
     vplanes[1].offset = 0;
-    vplanes[1].addr = vaddr[1];
     vplanes[2].fd = priv_hnd->fd2;
     vplanes[2].offset = 0;
+#endif
+    vplanes[0].addr = vaddr[0];
+    vplanes[1].addr = vaddr[1];
     vplanes[2].addr = vaddr[2];
 
-    *pStride = priv_hnd->stride;
+    *pStride = (OMX_U32)priv_hnd->stride;
 
     Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "%s: buffer locked: 0x%x", __func__, *vaddr);
 
@@ -132,7 +159,7 @@ OMX_ERRORTYPE Exynos_OSAL_UnlockANBHandle(OMX_IN OMX_U32 handle)
 
     OMX_ERRORTYPE ret = OMX_ErrorNone;
     GraphicBufferMapper &mapper = GraphicBufferMapper::get();
-    buffer_handle_t bufferHandle = (buffer_handle_t) handle;
+    buffer_handle_t bufferHandle = (buffer_handle_t)(uintptr_t) handle;
 
     Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "%s: handle: 0x%x", __func__, handle);
 
@@ -141,6 +168,8 @@ OMX_ERRORTYPE Exynos_OSAL_UnlockANBHandle(OMX_IN OMX_U32 handle)
         ret = OMX_ErrorUndefined;
         goto EXIT;
     }
+    lockCnt--;
+    Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "%s: lockCnt:%d", __func__, lockCnt);
 
     Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "%s: buffer unlocked: 0x%x", __func__, handle);
 
@@ -155,30 +184,17 @@ OMX_COLOR_FORMATTYPE Exynos_OSAL_GetANBColorFormat(OMX_IN OMX_U32 handle)
     FunctionIn();
 
     OMX_COLOR_FORMATTYPE ret = OMX_COLOR_FormatUnused;
-    private_handle_t *priv_hnd = (private_handle_t *) handle;
+#ifdef USE_DMA_BUF
+    private_handle_t *priv_hnd = (private_handle_t *)(uintptr_t) handle;
 
-    ret = Exynos_OSAL_Hal2OMXPixelFormat(priv_hnd->format);
+    ret = Exynos_OSAL_HAL2OMXColorFormat(priv_hnd->format);
     Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "ColorFormat: 0x%x", ret);
+#endif
 
 EXIT:
     FunctionOut();
 
     return ret;
-}
-
-OMX_U32 Exynos_OSAL_GetANBStride(OMX_IN OMX_U32 handle)
-{
-    FunctionIn();
-
-    OMX_U32 nStride = 0;
-    private_handle_t *priv_hnd = (private_handle_t *) handle;
-
-    nStride = priv_hnd->stride;
-
-EXIT:
-    FunctionOut();
-
-    return nStride;
 }
 
 OMX_ERRORTYPE Exynos_OSAL_LockMetaData(
@@ -191,13 +207,12 @@ OMX_ERRORTYPE Exynos_OSAL_LockMetaData(
 {
     FunctionIn();
 
-    OMX_ERRORTYPE ret = OMX_ErrorNone;
-    OMX_PTR pBuf;
+    OMX_ERRORTYPE   ret     = OMX_ErrorNone;
+    OMX_PTR         pBuf    = NULL;
 
     ret = Exynos_OSAL_GetInfoFromMetaData((OMX_BYTE)pBuffer, &pBuf);
-    if (ret == OMX_ErrorNone) {
-        ret = Exynos_OSAL_LockANBHandle((OMX_U32)pBuf, width, height, format, pStride, planes);
-    }
+    if (ret == OMX_ErrorNone)
+        ret = Exynos_OSAL_LockANBHandle(reinterpret_cast<uintptr_t>(pBuf), width, height, format, pStride, planes);
 
 EXIT:
     FunctionOut();
@@ -209,12 +224,12 @@ OMX_ERRORTYPE Exynos_OSAL_UnlockMetaData(OMX_IN OMX_PTR pBuffer)
 {
     FunctionIn();
 
-    OMX_ERRORTYPE ret = OMX_ErrorNone;
-    OMX_PTR pBuf;
+    OMX_ERRORTYPE   ret     = OMX_ErrorNone;
+    OMX_PTR         pBuf    = NULL;
 
     ret = Exynos_OSAL_GetInfoFromMetaData((OMX_BYTE)pBuffer, &pBuf);
     if (ret == OMX_ErrorNone)
-        ret = Exynos_OSAL_UnlockANBHandle((OMX_U32)pBuf);
+        ret = Exynos_OSAL_UnlockANBHandle(reinterpret_cast<uintptr_t>(pBuf));
 
 EXIT:
     FunctionOut();
@@ -222,17 +237,18 @@ EXIT:
     return ret;
 }
 
+#ifdef USE_ANB_REF
 OMX_HANDLETYPE Exynos_OSAL_RefANB_Create()
 {
-    int i = 0;
-    EXYNOS_OMX_REF_HANDLE *phREF = NULL;
-    gralloc_module_t      *module = NULL;
+    OMX_ERRORTYPE            ret    = OMX_ErrorNone;
+    EXYNOS_OMX_REF_HANDLE   *phREF  = NULL;
+    gralloc_module_t        *module = NULL;
 
-    OMX_ERRORTYPE err = OMX_ErrorNone;
+    int i = 0;
 
     FunctionIn();
 
-    phREF = (EXYNOS_OMX_REF_HANDLE *) Exynos_OSAL_Malloc(sizeof(EXYNOS_OMX_REF_HANDLE));
+    phREF = (EXYNOS_OMX_REF_HANDLE *)Exynos_OSAL_Malloc(sizeof(EXYNOS_OMX_REF_HANDLE));
     if (phREF == NULL)
         goto EXIT;
 
@@ -242,12 +258,16 @@ OMX_HANDLETYPE Exynos_OSAL_RefANB_Create()
         phREF->SharedBuffer[i].BufferFd1 = -1;
         phREF->SharedBuffer[i].BufferFd2 = -1;
     }
+    if (hw_get_module(GRALLOC_HARDWARE_MODULE_ID, (const hw_module_t **)&module) != 0) {
+        Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s: hw_get_module(GRALLOC_HARDWARE_MODULE_ID) fail", __func__);
+        ret = OMX_ErrorUndefined;
+        goto EXIT;
+    }
 
-    hw_get_module(GRALLOC_HARDWARE_MODULE_ID, (const hw_module_t **)&module);
     phREF->pGrallocModule = (OMX_PTR)module;
 
-    err = Exynos_OSAL_MutexCreate(&phREF->hMutex);
-    if (err != OMX_ErrorNone) {
+    ret = Exynos_OSAL_MutexCreate(&phREF->hMutex);
+    if (ret != OMX_ErrorNone) {
         Exynos_OSAL_Free(phREF);
         phREF = NULL;
     }
@@ -260,10 +280,11 @@ EXIT:
 
 OMX_ERRORTYPE Exynos_OSAL_RefANB_Reset(OMX_HANDLETYPE hREF)
 {
+    OMX_ERRORTYPE            ret    = OMX_ErrorNone;
+    EXYNOS_OMX_REF_HANDLE   *phREF  = (EXYNOS_OMX_REF_HANDLE *)hREF;
+    gralloc_module_t        *module = NULL;
+
     int i = 0;
-    OMX_ERRORTYPE ret = OMX_ErrorNone;
-    EXYNOS_OMX_REF_HANDLE *phREF = (EXYNOS_OMX_REF_HANDLE *)hREF;
-    gralloc_module_t* module = NULL;
 
     FunctionIn();
 
@@ -275,6 +296,7 @@ OMX_ERRORTYPE Exynos_OSAL_RefANB_Reset(OMX_HANDLETYPE hREF)
     module = (gralloc_module_t *)phREF->pGrallocModule;
 
     Exynos_OSAL_MutexLock(phREF->hMutex);
+
     for (i = 0; i < MAX_BUFFER_REF; i++) {
         if (phREF->SharedBuffer[i].BufferFd > -1) {
             while(phREF->SharedBuffer[i].cnt > 0) {
@@ -304,8 +326,9 @@ EXIT:
 
 OMX_ERRORTYPE Exynos_OSAL_RefANB_Terminate(OMX_HANDLETYPE hREF)
 {
-    OMX_ERRORTYPE ret = OMX_ErrorNone;
-    EXYNOS_OMX_REF_HANDLE *phREF = (EXYNOS_OMX_REF_HANDLE *)hREF;
+    OMX_ERRORTYPE            ret    = OMX_ErrorNone;
+    EXYNOS_OMX_REF_HANDLE   *phREF  = (EXYNOS_OMX_REF_HANDLE *)hREF;
+
     FunctionIn();
 
     if (phREF == NULL) {
@@ -332,16 +355,17 @@ EXIT:
 
 OMX_ERRORTYPE Exynos_OSAL_RefANB_Increase(OMX_HANDLETYPE hREF, OMX_PTR pBuffer)
 {
-    int i;
-    OMX_ERRORTYPE ret = OMX_ErrorNone;
-    buffer_handle_t bufferHandle = (buffer_handle_t) pBuffer; //pANB->handle
-    private_handle_t *priv_hnd = (private_handle_t *) bufferHandle;
-    EXYNOS_OMX_REF_HANDLE *phREF = (EXYNOS_OMX_REF_HANDLE *)hREF;
-    gralloc_module_t* module = NULL;
+    OMX_ERRORTYPE            ret    = OMX_ErrorNone;
+    EXYNOS_OMX_REF_HANDLE   *phREF  = (EXYNOS_OMX_REF_HANDLE *)hREF;
 
-    unsigned long *pIonHandle;
-    unsigned long *pIonHandle1;
-    unsigned long *pIonHandle2;
+    buffer_handle_t      bufferHandle   = (buffer_handle_t)pBuffer;
+    private_handle_t    *priv_hnd       = (private_handle_t *)bufferHandle;
+    gralloc_module_t    *module         = NULL;
+
+    unsigned long *pIonHandle  = NULL;
+    unsigned long *pIonHandle1 = NULL;
+    unsigned long *pIonHandle2 = NULL;
+    int i;
 
     FunctionIn();
 
@@ -354,15 +378,14 @@ OMX_ERRORTYPE Exynos_OSAL_RefANB_Increase(OMX_HANDLETYPE hREF, OMX_PTR pBuffer)
 
     Exynos_OSAL_MutexLock(phREF->hMutex);
 
-    if (priv_hnd->fd >= 0) {
+    if (priv_hnd->fd >= 0)
         ion_incRef(getIonFd(module), priv_hnd->fd, &pIonHandle);
-    }
-    if (priv_hnd->fd1 >= 0) {
+
+    if (priv_hnd->fd1 >= 0)
         ion_incRef(getIonFd(module), priv_hnd->fd1, &pIonHandle1);
-    }
-    if (priv_hnd->fd2 >= 0) {
+
+    if (priv_hnd->fd2 >= 0)
         ion_incRef(getIonFd(module), priv_hnd->fd2, &pIonHandle2);
-    }
 
     for (i = 0; i < MAX_BUFFER_REF; i++) {
         if (phREF->SharedBuffer[i].BufferFd == priv_hnd->fd) {
@@ -390,9 +413,8 @@ OMX_ERRORTYPE Exynos_OSAL_RefANB_Increase(OMX_HANDLETYPE hREF, OMX_PTR pBuffer)
 
     Exynos_OSAL_MutexUnlock(phREF->hMutex);
 
-    if (i >=  MAX_BUFFER_REF) {
+    if (i >=  MAX_BUFFER_REF)
         ret = OMX_ErrorUndefined;
-    }
 
 EXIT:
     FunctionOut();
@@ -400,12 +422,14 @@ EXIT:
     return ret;
 }
 
-OMX_ERRORTYPE Exynos_OSAL_RefANB_Decrease(OMX_HANDLETYPE hREF, OMX_U32 BufferFd)
+OMX_ERRORTYPE Exynos_OSAL_RefANB_Decrease(OMX_HANDLETYPE hREF, OMX_S32 BufferFd)
 {
+
+    OMX_ERRORTYPE            ret    = OMX_ErrorNone;
+    EXYNOS_OMX_REF_HANDLE   *phREF  = (EXYNOS_OMX_REF_HANDLE *)hREF;
+    gralloc_module_t        *module = NULL;
+
     int i;
-    OMX_ERRORTYPE ret = OMX_ErrorNone;
-    EXYNOS_OMX_REF_HANDLE *phREF = (EXYNOS_OMX_REF_HANDLE *)hREF;
-    gralloc_module_t* module = NULL;
 
     FunctionIn();
 
@@ -427,6 +451,7 @@ OMX_ERRORTYPE Exynos_OSAL_RefANB_Decrease(OMX_HANDLETYPE hREF, OMX_U32 BufferFd)
             if (phREF->SharedBuffer[i].BufferFd2 > -1)
                 ion_decRef(getIonFd(module), phREF->SharedBuffer[i].pIonHandle2);
             phREF->SharedBuffer[i].cnt--;
+
             if (phREF->SharedBuffer[i].cnt == 0) {
                 phREF->SharedBuffer[i].BufferFd    = -1;
                 phREF->SharedBuffer[i].BufferFd1   = -1;
@@ -452,9 +477,10 @@ EXIT:
 
     return ret;
 }
+#endif
 
 OMX_ERRORTYPE useAndroidNativeBuffer(
-    EXYNOS_OMX_BASEPORT      *pExynosPort,
+    EXYNOS_OMX_BASEPORT   *pExynosPort,
     OMX_BUFFERHEADERTYPE **ppBufferHdr,
     OMX_U32                nPortIndex,
     OMX_PTR                pAppPrivate,
@@ -495,8 +521,12 @@ OMX_ERRORTYPE useAndroidNativeBuffer(
             pExynosPort->extendBufferHeader[i].OMXBufferHeader = temp_bufferHeader;
             pExynosPort->bufferStateAllocate[i] = (BUFFER_STATE_ASSIGNED | HEADER_STATE_ALLOCATED);
             INIT_SET_SIZE_VERSION(temp_bufferHeader, OMX_BUFFERHEADERTYPE);
-            android_native_buffer_t *pANB = (android_native_buffer_t *) pBuffer;
-            temp_bufferHeader->pBuffer = (OMX_U8 *)pANB->handle;
+            if (pExynosPort->eANBType == NATIVE_GRAPHIC_BUFFER1) {
+                android_native_buffer_t *pANB = (android_native_buffer_t *)pBuffer;
+                temp_bufferHeader->pBuffer = (OMX_U8 *)pANB->handle;
+            } else {
+                temp_bufferHeader->pBuffer = (OMX_U8 *)pBuffer;
+            }
             temp_bufferHeader->nAllocLen      = nSizeBytes;
             temp_bufferHeader->pAppPrivate    = pAppPrivate;
             if (nPortIndex == INPUT_PORT_INDEX)
@@ -506,22 +536,24 @@ OMX_ERRORTYPE useAndroidNativeBuffer(
 
             width = pExynosPort->portDefinition.format.video.nFrameWidth;
             height = pExynosPort->portDefinition.format.video.nFrameHeight;
-            Exynos_OSAL_LockANBHandle((OMX_U32)temp_bufferHeader->pBuffer, width, height,
+            Exynos_OSAL_LockANBHandle(reinterpret_cast<uintptr_t>(temp_bufferHeader->pBuffer), width, height,
                                 pExynosPort->portDefinition.format.video.eColorFormat,
                                 &stride, planes);
+#ifdef USE_DMA_BUF
             pExynosPort->extendBufferHeader[i].buf_fd[0] = planes[0].fd;
-            pExynosPort->extendBufferHeader[i].pYUVBuf[0] = planes[0].addr;
             pExynosPort->extendBufferHeader[i].buf_fd[1] = planes[1].fd;
-            pExynosPort->extendBufferHeader[i].pYUVBuf[1] = planes[1].addr;
             pExynosPort->extendBufferHeader[i].buf_fd[2] = planes[2].fd;
+#endif
+            pExynosPort->extendBufferHeader[i].pYUVBuf[0] = planes[0].addr;
+            pExynosPort->extendBufferHeader[i].pYUVBuf[1] = planes[1].addr;
             pExynosPort->extendBufferHeader[i].pYUVBuf[2] = planes[2].addr;
-            Exynos_OSAL_UnlockANBHandle((OMX_U32)temp_bufferHeader->pBuffer);
-            Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "useAndroidNativeBuffer: buf %d pYUVBuf[0]:0x%x (fd:%d), pYUVBuf[1]:0x%x (fd:%d)",
-                            i, pExynosPort->extendBufferHeader[i].pYUVBuf[0], planes[0].fd,
-                            pExynosPort->extendBufferHeader[i].pYUVBuf[1], planes[1].fd);
+            Exynos_OSAL_UnlockANBHandle(reinterpret_cast<uintptr_t>(temp_bufferHeader->pBuffer));
+            Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "useAndroidNativeBuffer: buf %d pYUVBuf[0]:0x%x , pYUVBuf[1]:0x%x ",
+                            i, pExynosPort->extendBufferHeader[i].pYUVBuf[0],
+                            pExynosPort->extendBufferHeader[i].pYUVBuf[1]);
 
             pExynosPort->assignedBufferNum++;
-            if (pExynosPort->assignedBufferNum == pExynosPort->portDefinition.nBufferCountActual) {
+            if (pExynosPort->assignedBufferNum == (OMX_S32)pExynosPort->portDefinition.nBufferCountActual) {
                 pExynosPort->portDefinition.bPopulated = OMX_TRUE;
                 /* Exynos_OSAL_MutexLock(pExynosComponent->compMutex); */
                 Exynos_OSAL_SemaphorePost(pExynosPort->loadedResource);
@@ -543,7 +575,7 @@ EXIT:
     return ret;
 }
 
-OMX_ERRORTYPE Exynos_OSAL_GetANBParameter(
+OMX_ERRORTYPE Exynos_OSAL_GetAndroidParameter(
     OMX_IN OMX_HANDLETYPE hComponent,
     OMX_IN OMX_INDEXTYPE  nIndex,
     OMX_INOUT OMX_PTR     ComponentParameterStructure)
@@ -581,7 +613,8 @@ OMX_ERRORTYPE Exynos_OSAL_GetANBParameter(
         goto EXIT;
     }
 
-    switch (nIndex) {
+    switch ((int)nIndex) {
+#ifdef USE_ANB
     case OMX_IndexParamGetAndroidNativeBuffer:
     {
         GetAndroidNativeBufferUsageParams *pANBParams = (GetAndroidNativeBufferUsageParams *) ComponentParameterStructure;
@@ -604,8 +637,18 @@ OMX_ERRORTYPE Exynos_OSAL_GetANBParameter(
          * modifications since currently not defined what the 'nUsage' is for.
          */
         pANBParams->nUsage |= (GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_EXTERNAL_DISP);
+#if defined(USE_IMPROVED_BUFFER) && !defined(USE_CSC_HW) && !defined(USE_NON_CACHED_GRAPHICBUFFER)
+        pANBParams->nUsage |= (GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN);
+#endif
+#if defined(USE_MFC5X_ALIGNMENT)
+        if ((pExynosComponent->pExynosPort[OUTPUT_PORT_INDEX].bufferProcessType & BUFFER_SHARE) &&
+            (pExynosComponent->pExynosPort[INPUT_PORT_INDEX].portDefinition.format.video.eCompressionFormat == OMX_VIDEO_CodingAVC)) {
+            pANBParams->nUsage |= GRALLOC_USAGE_PRIVATE_0;
+        }
+#endif
     }
         break;
+#endif
 
     default:
     {
@@ -622,7 +665,7 @@ EXIT:
     return ret;
 }
 
-OMX_ERRORTYPE Exynos_OSAL_SetANBParameter(
+OMX_ERRORTYPE Exynos_OSAL_SetAndroidParameter(
     OMX_IN OMX_HANDLETYPE hComponent,
     OMX_IN OMX_INDEXTYPE  nIndex,
     OMX_IN OMX_PTR        ComponentParameterStructure)
@@ -660,10 +703,10 @@ OMX_ERRORTYPE Exynos_OSAL_SetANBParameter(
         goto EXIT;
     }
 
-    switch (nIndex) {
+    switch ((int)nIndex) {
+#ifdef USE_ANB
     case OMX_IndexParamEnableAndroidBuffers:
     {
-        EXYNOS_OMX_VIDEODEC_COMPONENT *pVideoDec = (EXYNOS_OMX_VIDEODEC_COMPONENT *)pExynosComponent->hComponentHandle;
         EnableAndroidNativeBuffersParams *pANBParams = (EnableAndroidNativeBuffersParams *) ComponentParameterStructure;
         OMX_U32 portIndex = pANBParams->nPortIndex;
         EXYNOS_OMX_BASEPORT *pExynosPort = NULL;
@@ -687,28 +730,44 @@ OMX_ERRORTYPE Exynos_OSAL_SetANBParameter(
             goto EXIT;
         }
 
-        /* ANB and DPB Buffer Sharing */
         if (pExynosPort->bStoreMetaData != OMX_TRUE)
             pExynosPort->bIsANBEnabled = pANBParams->enable;
+
+#ifdef USE_ANB_OUTBUF_SHARE
+         /* ANB and DPB Buffer Sharing */
         if ((portIndex == OUTPUT_PORT_INDEX) &&
-            (pExynosPort->bIsANBEnabled == OMX_TRUE) &&
-            ((pExynosPort->bufferProcessType & BUFFER_ANBSHARE) == BUFFER_ANBSHARE)) {
-            pExynosPort->bufferProcessType = BUFFER_SHARE;
-            pExynosPort->portDefinition.format.video.eColorFormat = (OMX_COLOR_FORMATTYPE)OMX_SEC_COLOR_FormatNV12Tiled;
-            Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "OMX_IndexParamEnableAndroidBuffers & bufferProcessType change to BUFFER_SHARE");
-        } else if ((portIndex == OUTPUT_PORT_INDEX) &&
-            (pExynosPort->bStoreMetaData == OMX_FALSE && pExynosPort->bIsANBEnabled == OMX_FALSE) &&
-            pExynosPort->bufferProcessType == BUFFER_SHARE) {
-            pExynosPort->bufferProcessType = (EXYNOS_OMX_BUFFERPROCESS_TYPE)(BUFFER_COPY | BUFFER_ANBSHARE);
-            pExynosPort->portDefinition.format.video.eColorFormat = OMX_COLOR_FormatYUV420Planar;
-            Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "No OMX_IndexParamEnableAndroidBuffers => reset bufferProcessType");
+            (pExynosPort->bIsANBEnabled == OMX_TRUE)) {
+            if ((pExynosPort->bufferProcessType & BUFFER_ANBSHARE) == BUFFER_ANBSHARE) {
+                pExynosPort->bufferProcessType = BUFFER_SHARE;
+                pExynosPort->portDefinition.format.video.eColorFormat = (OMX_COLOR_FORMATTYPE)OMX_SEC_COLOR_FormatNV12Tiled;
+                Exynos_OSAL_Log(EXYNOS_LOG_INFO, "output buffer sharing mode is on (NV12T)");
+            } else if ((pExynosPort->bStoreMetaData == OMX_FALSE) &&
+                (pExynosPort->bIsANBEnabled == OMX_FALSE) &&
+                (pExynosPort->bufferProcessType == BUFFER_SHARE)) {
+                pExynosPort->bufferProcessType = (EXYNOS_OMX_BUFFERPROCESS_TYPE)(BUFFER_COPY | BUFFER_ANBSHARE);
+                pExynosPort->portDefinition.format.video.eColorFormat = OMX_COLOR_FormatYUV420Planar;
+                Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "No OMX_IndexParamEnableAndroidBuffers => reset bufferProcessType");
+            } else if ((pExynosPort->bufferProcessType & BUFFER_ANBSHARE_NV12L) == BUFFER_ANBSHARE_NV12L) {
+                pExynosPort->bufferProcessType = BUFFER_SHARE;
+                pExynosPort->portDefinition.format.video.eColorFormat = OMX_COLOR_FormatYUV420SemiPlanar;
+                Exynos_OSAL_Log(EXYNOS_LOG_INFO, "output buffer sharing mode is on (NV12L)");
+            } else {
+                pExynosPort->bufferProcessType = BUFFER_COPY;
+                pExynosPort->portDefinition.format.video.eColorFormat = OMX_COLOR_FormatYUV420SemiPlanar;
+            }
         }
+#else
+        if ((portIndex == OUTPUT_PORT_INDEX) &&
+            (pExynosPort->bufferProcessType & BUFFER_COPY)) {
+            pExynosPort->bufferProcessType = BUFFER_COPY;
+            pExynosPort->portDefinition.format.video.eColorFormat = OMX_COLOR_FormatYUV420SemiPlanar;
+        }
+#endif
     }
         break;
 
     case OMX_IndexParamUseAndroidNativeBuffer:
     {
-        EXYNOS_OMX_VIDEODEC_COMPONENT *pVideoDec = (EXYNOS_OMX_VIDEODEC_COMPONENT *)pExynosComponent->hComponentHandle;
         UseAndroidNativeBufferParams *pANBParams = (UseAndroidNativeBufferParams *) ComponentParameterStructure;
         OMX_U32 portIndex = pANBParams->nPortIndex;
         EXYNOS_OMX_BASEPORT *pExynosPort = NULL;
@@ -758,16 +817,18 @@ OMX_ERRORTYPE Exynos_OSAL_SetANBParameter(
         }
     }
         break;
+#endif
 
+#ifdef USE_STOREMETADATA
     case OMX_IndexParamStoreMetaDataBuffer:
     {
-        StoreMetaDataInBuffersParams *pANBParams = (StoreMetaDataInBuffersParams *) ComponentParameterStructure;
-        OMX_U32 portIndex = pANBParams->nPortIndex;
+        StoreMetaDataInBuffersParams *pMetaParams = (StoreMetaDataInBuffersParams *)ComponentParameterStructure;
+        OMX_U32 portIndex = pMetaParams->nPortIndex;
         EXYNOS_OMX_BASEPORT *pExynosPort = NULL;
 
         Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "%s: OMX_IndexParamStoreMetaDataBuffer", __func__);
 
-        ret = Exynos_OMX_Check_SizeVersion(pANBParams, sizeof(StoreMetaDataInBuffersParams));
+        ret = Exynos_OMX_Check_SizeVersion(pMetaParams, sizeof(StoreMetaDataInBuffersParams));
         if (ret != OMX_ErrorNone) {
             Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s: Exynos_OMX_Check_SizeVersion(StoreMetaDataInBuffersParams) is failed", __func__);
             goto EXIT;
@@ -778,34 +839,49 @@ OMX_ERRORTYPE Exynos_OSAL_SetANBParameter(
             goto EXIT;
         }
 
+        if (pExynosComponent->codecType == HW_VIDEO_DEC_CODEC) {
+            EXYNOS_OMX_BASEPORT *pOutputPort = &pExynosComponent->pExynosPort[OUTPUT_PORT_INDEX];
+            if ((portIndex == INPUT_PORT_INDEX) ||
+                (pOutputPort->bDynamicDPBMode == OMX_FALSE)) {
+                ret = OMX_ErrorUndefined;
+                goto EXIT;
+            }
+        }
+
         pExynosPort = &pExynosComponent->pExynosPort[portIndex];
         if (CHECK_PORT_TUNNELED(pExynosPort) && CHECK_PORT_BUFFER_SUPPLIER(pExynosPort)) {
             ret = OMX_ErrorBadPortIndex;
             goto EXIT;
         }
 
-        pExynosPort->bStoreMetaData = pANBParams->bStoreMetaData;
-        if (pExynosComponent->codecType == HW_VIDEO_ENC_CODEC) {
-            EXYNOS_OMX_VIDEOENC_COMPONENT *pVideoEnc = (EXYNOS_OMX_VIDEOENC_COMPONENT *)pExynosComponent->hComponentHandle;;
-        } else if (pExynosComponent->codecType == HW_VIDEO_DEC_CODEC) {
-            EXYNOS_OMX_VIDEODEC_COMPONENT *pVideoDec = (EXYNOS_OMX_VIDEODEC_COMPONENT *)pExynosComponent->hComponentHandle;;
-            if ((portIndex == OUTPUT_PORT_INDEX) &&
-                (pExynosPort->bStoreMetaData == OMX_TRUE) &&
-                ((pExynosPort->bufferProcessType & BUFFER_ANBSHARE) == BUFFER_ANBSHARE)) {
+        pExynosPort->bStoreMetaData = pMetaParams->bStoreMetaData;
+
+        if ((pExynosComponent->codecType == HW_VIDEO_DEC_CODEC) &&
+            (portIndex == OUTPUT_PORT_INDEX) &&
+            (pExynosPort->bStoreMetaData == OMX_TRUE)) {
+
+            if ((pExynosPort->bufferProcessType & BUFFER_ANBSHARE) == BUFFER_ANBSHARE) {
                 pExynosPort->bufferProcessType = BUFFER_SHARE;
                 pExynosPort->portDefinition.format.video.eColorFormat = (OMX_COLOR_FORMATTYPE)OMX_SEC_COLOR_FormatNV12Tiled;
-                Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "OMX_IndexParamStoreMetaDataBuffer & bufferProcessType change to BUFFER_SHARE");
-            } else if ((portIndex == OUTPUT_PORT_INDEX) &&
-                (pExynosPort->bStoreMetaData == OMX_FALSE && pExynosPort->bIsANBEnabled == OMX_FALSE) &&
-                pExynosPort->bufferProcessType == BUFFER_SHARE) {
+                Exynos_OSAL_Log(EXYNOS_LOG_INFO, "output buffer sharing mode is on (NV12T)");
+            } else if ((pExynosPort->bStoreMetaData == OMX_FALSE) &&
+                (pExynosPort->bIsANBEnabled == OMX_FALSE) &&
+                (pExynosPort->bufferProcessType == BUFFER_SHARE)) {
                 pExynosPort->bufferProcessType = (EXYNOS_OMX_BUFFERPROCESS_TYPE)(BUFFER_COPY | BUFFER_ANBSHARE);
                 pExynosPort->portDefinition.format.video.eColorFormat = OMX_COLOR_FormatYUV420Planar;
                 Exynos_OSAL_Log(EXYNOS_LOG_TRACE, "No OMX_IndexParamStoreMetaDataBuffer => reset bufferProcessType");
+            } else if ((pExynosPort->bufferProcessType & BUFFER_ANBSHARE_NV12L) == BUFFER_ANBSHARE_NV12L) {
+                pExynosPort->bufferProcessType = BUFFER_SHARE;
+                pExynosPort->portDefinition.format.video.eColorFormat = OMX_COLOR_FormatYUV420SemiPlanar;
+                Exynos_OSAL_Log(EXYNOS_LOG_INFO, "output buffer sharing mode is on (NV12L)");
+            } else {
+                ret = OMX_ErrorUndefined;
+                Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s: bufferProcessType is invalid", __func__);
             }
-
         }
     }
         break;
+#endif
 
     default:
     {
@@ -833,25 +909,32 @@ OMX_ERRORTYPE Exynos_OSAL_GetInfoFromMetaData(OMX_IN OMX_BYTE pBuffer,
 /*
  * meta data contains the following data format.
  * payload depends on the MetadataBufferType
- * --------------------------------------------------------------
- * | MetadataBufferType                         |          payload                           |
- * --------------------------------------------------------------
+ * ---------------------------------------------------------------
+ * | MetadataBufferType               |         payload          |
+ * ---------------------------------------------------------------
  *
  * If MetadataBufferType is kMetadataBufferTypeCameraSource, then
- * --------------------------------------------------------------
- * | kMetadataBufferTypeCameraSource  | physical addr. of Y |physical addr. of CbCr |
- * --------------------------------------------------------------
+ * ---------------------------------------------------------------
+ * | kMetadataBufferTypeCameraSource  | addr. of Y | addr. of UV |
+ * ---------------------------------------------------------------
  *
  * If MetadataBufferType is kMetadataBufferTypeGrallocSource, then
- * --------------------------------------------------------------
- * | kMetadataBufferTypeGrallocSource    | buffer_handle_t |
- * --------------------------------------------------------------
+ * ---------------------------------------------------------------
+ * | kMetadataBufferTypeGrallocSource |     buffer_handle_t      |
+ * ---------------------------------------------------------------
+ *
+ * If MetadataBufferType is kMetadataBufferTypeEncodeOutput, then
+ * ---------------------------------------------------------------
+ * | kMetadataBufferTypeEncodeOutput  |     buffer_handle_t      |
+ * ---------------------------------------------------------------
  */
 
     /* MetadataBufferType */
     Exynos_OSAL_Memcpy(&type, (MetadataBufferType *)pBuffer, sizeof(MetadataBufferType));
 
-    if (type == kMetadataBufferTypeCameraSource) {
+    switch ((int)type) {
+    case kMetadataBufferTypeCameraSource:
+    {
         void *pAddress = NULL;
 
         /* Address. of Y */
@@ -862,12 +945,41 @@ OMX_ERRORTYPE Exynos_OSAL_GetInfoFromMetaData(OMX_IN OMX_BYTE pBuffer,
         Exynos_OSAL_Memcpy(&pAddress, pBuffer + sizeof(MetadataBufferType) + sizeof(void *), sizeof(void *));
         ppBuf[1] = (void *)pAddress;
 
-    } else if (type == kMetadataBufferTypeGrallocSource) {
+        if ((ppBuf[0] == NULL) || (ppBuf[1] == NULL))
+            ret = OMX_ErrorBadParameter;
+    }
+        break;
+    case kMetadataBufferTypeGrallocSource:
+    {
         buffer_handle_t    pBufHandle;
 
         /* buffer_handle_t */
         Exynos_OSAL_Memcpy(&pBufHandle, pBuffer + sizeof(MetadataBufferType), sizeof(buffer_handle_t));
         ppBuf[0] = (OMX_PTR)pBufHandle;
+
+        if (ppBuf[0] == NULL)
+            ret = OMX_ErrorBadParameter;
+    }
+        break;
+    case kMetadataBufferTypeEncodeOutput:
+    {
+        OMX_U32          nIonFD         = -1;
+        buffer_handle_t  bufferHandle   = NULL;
+        native_handle_t *pNativeHandle  = NULL;
+
+        bufferHandle = *(buffer_handle_t *)((char *)pBuffer + sizeof(MetadataBufferType));
+        pNativeHandle = (native_handle_t *)bufferHandle;
+
+        /* ION FD. */
+        nIonFD = (OMX_U32)pNativeHandle->data[0];
+        ppBuf[0] = (OMX_PTR *)(uintptr_t)nIonFD;
+    }
+        break;
+    default:
+    {
+        ret = OMX_ErrorBadParameter;
+    }
+        break;
     }
 
 EXIT:
@@ -876,86 +988,185 @@ EXIT:
     return ret;
 }
 
-OMX_ERRORTYPE Exynos_OSAL_SetPrependSPSPPSToIDR(
-    OMX_PTR pComponentParameterStructure,
-    OMX_PTR pbPrependSpsPpsToIdr)
+OMX_ERRORTYPE Exynos_OSAL_SetDataLengthToMetaData(
+    OMX_IN OMX_BYTE pBuffer,
+    OMX_IN OMX_U32  dataLength)
 {
-    OMX_ERRORTYPE                    ret        = OMX_ErrorNone;
-    PrependSPSPPSToIDRFramesParams  *pANBParams = (PrependSPSPPSToIDRFramesParams *)pComponentParameterStructure;
+    OMX_ERRORTYPE      ret  = OMX_ErrorNone;
+    MetadataBufferType type = (MetadataBufferType)kMetadataBufferTypeEncodeOutput;
 
-    ret = Exynos_OMX_Check_SizeVersion(pANBParams, sizeof(PrependSPSPPSToIDRFramesParams));
-    if (ret != OMX_ErrorNone) {
-        Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s: Exynos_OMX_Check_SizeVersion(PrependSPSPPSToIDRFrames) is failed", __func__);
-        goto EXIT;
+    FunctionIn();
+
+    /* MetadataBufferType */
+    Exynos_OSAL_Memcpy(&type, (MetadataBufferType *)pBuffer, sizeof(MetadataBufferType));
+
+    switch ((int)type) {
+    case kMetadataBufferTypeCameraSource:
+    case kMetadataBufferTypeGrallocSource:
+    {
+        Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s : %d - Unsupport Type of MetadataBuffer", __FUNCTION__, __LINE__);
+    }
+        break;
+    case kMetadataBufferTypeEncodeOutput:
+    {
+        OMX_U32 nIonFD = -1;
+        buffer_handle_t bufferHandle = NULL;
+        native_handle_t *pNativeHandle = NULL;
+
+        bufferHandle = *(buffer_handle_t*)((char *)pBuffer + sizeof(MetadataBufferType));
+        pNativeHandle = (native_handle_t *)bufferHandle;
+
+        pNativeHandle->data[3] = dataLength;
+    }
+        break;
+    default:
+    {
+        ret = OMX_ErrorBadParameter;
+    }
+        break;
     }
 
-    (*((OMX_BOOL *)pbPrependSpsPpsToIdr)) = pANBParams->bEnable;
+EXIT:
+    FunctionOut();
+
+    return ret;
+}
+
+OMX_PTR Exynos_OSAL_AllocMetaDataBuffer(
+    OMX_HANDLETYPE      hSharedMemory,
+    EXYNOS_CODEC_TYPE   codecType,
+    OMX_U32             nPortIndex,
+    OMX_U32             nSizeBytes,
+    MEMORY_TYPE         eMemoryType)
+{
+    /*
+     * meta data contains the following data format.
+     * payload depends on the MetadataBufferType
+     * ---------------------------------------------------------------
+     * | MetadataBufferType               |         payload          |
+     * ---------------------------------------------------------------
+     * If MetadataBufferType is kMetadataBufferTypeEncodeOutput, then
+     * ---------------------------------------------------------------
+     * | kMetadataBufferTypeEncodeOutput  |     buffer_handle_t      |
+     * ---------------------------------------------------------------
+     */
+
+#define ENC_OUT_FD_NUM 1
+#define EXTRA_DATA_NUM 3
+
+    buffer_handle_t  bufferHandle  = NULL;
+    native_handle_t *pNativeHandle = NULL;
+
+    OMX_PTR pTempBuffer = NULL;
+    OMX_PTR pTempVirAdd = NULL;
+    OMX_U32 nTempFD     = 0;
+
+    if ((codecType == HW_VIDEO_ENC_CODEC) &&
+        (nPortIndex == OUTPUT_PORT_INDEX)) {
+        pTempBuffer = Exynos_OSAL_Malloc(MAX_METADATA_BUFFER_SIZE);
+        if (pTempBuffer == NULL) {
+            Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s : %d - Error InsufficientResources", __FUNCTION__, __LINE__);
+            goto EXIT;
+        }
+
+        pNativeHandle = native_handle_create(ENC_OUT_FD_NUM, EXTRA_DATA_NUM);
+        if (pNativeHandle == NULL) {
+            Exynos_OSAL_Free(pTempBuffer);
+            pTempBuffer = NULL;
+            Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s : %d - Error InsufficientResources", __FUNCTION__, __LINE__);
+            goto EXIT;
+        }
+
+        pTempVirAdd = Exynos_OSAL_SharedMemory_Alloc(hSharedMemory, nSizeBytes, eMemoryType);
+        if (pTempVirAdd == NULL) {
+            native_handle_delete(pNativeHandle);
+            pNativeHandle = NULL;
+            Exynos_OSAL_Free(pTempBuffer);
+            pTempBuffer = NULL;
+            Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s : %d - Error InsufficientResources", __FUNCTION__, __LINE__);
+            goto EXIT;
+        }
+
+        nTempFD = Exynos_OSAL_SharedMemory_VirtToION(hSharedMemory, pTempVirAdd);
+
+        pNativeHandle->data[0] = (int)nTempFD;
+        pNativeHandle->data[1] = reinterpret_cast<intptr_t>(pTempVirAdd);
+        pNativeHandle->data[2] = (int)nSizeBytes;
+        pNativeHandle->data[3] = (int)0;
+
+        bufferHandle = (buffer_handle_t)pNativeHandle;
+        *(MetadataBufferType *)(pTempBuffer) = (MetadataBufferType)kMetadataBufferTypeEncodeOutput;
+        *(buffer_handle_t*)((char *)pTempBuffer + sizeof(MetadataBufferType)) = (buffer_handle_t)bufferHandle;
+    } else {
+        Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s : %d - Unsupport MetadataBuffer", __FUNCTION__, __LINE__);
+        pTempBuffer = NULL;
+    }
+
+EXIT:
+    return pTempBuffer;
+}
+
+OMX_ERRORTYPE Exynos_OSAL_FreeMetaDataBuffer(
+    OMX_HANDLETYPE      hSharedMemory,
+    EXYNOS_CODEC_TYPE   codecType,
+    OMX_U32             nPortIndex,
+    OMX_PTR             pTempBuffer)
+{
+    OMX_ERRORTYPE ret = OMX_ErrorNone;
+
+    OMX_U32 nTempFD     = 0;
+    OMX_PTR pTempVirAdd = NULL;
+
+    buffer_handle_t  bufferHandle   = NULL;
+    native_handle_t *pNativeHandle  = NULL;
+
+    if ((codecType == HW_VIDEO_ENC_CODEC) &&
+        (nPortIndex == OUTPUT_PORT_INDEX)) {
+        if (*(MetadataBufferType *)(pTempBuffer) != (MetadataBufferType)kMetadataBufferTypeEncodeOutput) {
+            Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s : %d - Invalid MetaDataBuffer", __FUNCTION__, __LINE__);
+            ret = OMX_ErrorBadParameter;
+            goto EXIT;
+        }
+
+        bufferHandle = *(buffer_handle_t*)((char *)pTempBuffer + sizeof(MetadataBufferType));
+        pNativeHandle = (native_handle_t *)bufferHandle;
+
+        nTempFD     = (OMX_U32)pNativeHandle->data[0];
+        pTempVirAdd = (OMX_PTR)(intptr_t)pNativeHandle->data[1];
+
+        Exynos_OSAL_SharedMemory_Free(hSharedMemory, pTempVirAdd);
+
+        native_handle_delete(pNativeHandle);
+
+        Exynos_OSAL_Free(pTempBuffer);
+
+        ret = OMX_ErrorNone;
+    } else {
+        Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s : %d - Unsupport MetadataBuffer", __FUNCTION__, __LINE__);
+        ret = OMX_ErrorNotImplemented;
+    }
 
 EXIT:
     return ret;
 }
 
-OMX_COLOR_FORMATTYPE Exynos_OSAL_Hal2OMXPixelFormat(
-    unsigned int hal_format)
+OMX_ERRORTYPE Exynos_OSAL_SetPrependSPSPPSToIDR(
+    OMX_PTR pComponentParameterStructure,
+    OMX_PTR pbPrependSpsPpsToIdr)
 {
-    OMX_COLOR_FORMATTYPE omx_format;
-    switch (hal_format) {
-    case HAL_PIXEL_FORMAT_YCbCr_422_I:
-        omx_format = OMX_COLOR_FormatYCbYCr;
-        break;
-    case HAL_PIXEL_FORMAT_YCbCr_420_P:
-        omx_format = OMX_COLOR_FormatYUV420Planar;
-        break;
-    case HAL_PIXEL_FORMAT_YCbCr_420_SP:
-        omx_format = OMX_COLOR_FormatYUV420SemiPlanar;
-        break;
-    case HAL_PIXEL_FORMAT_CUSTOM_YCbCr_420_SP_TILED:
-        omx_format = (OMX_COLOR_FORMATTYPE)OMX_SEC_COLOR_FormatNV12TPhysicalAddress;
-        break;
-    case HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED:
-        omx_format = (OMX_COLOR_FORMATTYPE)OMX_SEC_COLOR_FormatNV12Tiled;
-        break;
-    case HAL_PIXEL_FORMAT_BGRA_8888:
-    case HAL_PIXEL_FORMAT_CUSTOM_ARGB_8888:
-        omx_format = OMX_COLOR_Format32bitARGB8888;
-        break;
-    default:
-        omx_format = OMX_COLOR_FormatYUV420Planar;
-        break;
+    OMX_ERRORTYPE                    ret        = OMX_ErrorNone;
+    PrependSPSPPSToIDRFramesParams  *pParams = (PrependSPSPPSToIDRFramesParams *)pComponentParameterStructure;
+    ret = Exynos_OMX_Check_SizeVersion(pParams, sizeof(PrependSPSPPSToIDRFramesParams));
+    if (ret != OMX_ErrorNone) {
+        Exynos_OSAL_Log(EXYNOS_LOG_ERROR, "%s: Exynos_OMX_Check_SizeVersion(PrependSPSPPSToIDRFramesParams) is failed", __func__);
+        goto EXIT;
     }
-    return omx_format;
-}
 
-unsigned int Exynos_OSAL_OMX2HalPixelFormat(
-    OMX_COLOR_FORMATTYPE omx_format)
-{
-    unsigned int hal_format;
-    switch (omx_format) {
-    case OMX_COLOR_FormatYCbYCr:
-        hal_format = HAL_PIXEL_FORMAT_YCbCr_422_I;
-        break;
-    case OMX_COLOR_FormatYUV420Planar:
-        hal_format = HAL_PIXEL_FORMAT_YCbCr_420_P;
-        break;
-    case OMX_COLOR_FormatYUV420SemiPlanar:
-        hal_format = HAL_PIXEL_FORMAT_YCbCr_420_SP;
-        break;
-    case OMX_SEC_COLOR_FormatNV12TPhysicalAddress:
-        hal_format = HAL_PIXEL_FORMAT_CUSTOM_YCbCr_420_SP_TILED;
-        break;
-    case OMX_SEC_COLOR_FormatNV12Tiled:
-        hal_format = HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED;
-        break;
-    case OMX_COLOR_Format32bitARGB8888:
-        hal_format = HAL_PIXEL_FORMAT_CUSTOM_ARGB_8888;
-        break;
-    default:
-        hal_format = HAL_PIXEL_FORMAT_YCbCr_420_P;
-        break;
-    }
-    return hal_format;
-}
+    (*((OMX_BOOL *)pbPrependSpsPpsToIdr)) = pParams->bEnable;
 
+EXIT:
+    return ret;
+}
 
 #ifdef __cplusplus
 }

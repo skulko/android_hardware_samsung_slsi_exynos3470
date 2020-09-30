@@ -10,7 +10,10 @@ LOCAL_SRC_FILES := \
 LOCAL_MODULE := libOMX.Exynos.MP3.Decoder
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/omx
 
-LOCAL_CFLAGS :=
+LOCAL_CFLAGS := \
+        -Wno-enum-conversion \
+        -Wno-unused-label \
+        -Wno-unused-variable
 
 LOCAL_ARM_MODE := arm
 
@@ -25,6 +28,6 @@ LOCAL_C_INCLUDES := $(EXYNOS_OMX_INC)/khronos \
 	$(EXYNOS_OMX_TOP)/core \
 	$(EXYNOS_OMX_COMPONENT)/common \
 	$(EXYNOS_OMX_COMPONENT)/audio/dec \
-	hardware/samsung_slsi/exynos3470/exynos_omx/codecs/exynos_codecs/audio/exynos3/srp/alp/include
+	hardware/samsung_slsi-cm/exynos3470/exynos_omx/codecs/exynos_codecs/audio/exynos3/srp/alp/include
 
 include $(BUILD_SHARED_LIBRARY)

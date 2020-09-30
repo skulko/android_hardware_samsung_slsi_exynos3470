@@ -21,6 +21,8 @@ LOCAL_MODULE := libExynosOMX_OSAL
 LOCAL_CFLAGS :=
 
 LOCAL_CLANG_CFLAGS += \
+        -Wno-unused-variable \
+        -Wno-unused-label \
 	-Wno-implicit-function-declaration \
 	-Wno-int-conversion \
 	-Wno-sign-compare
@@ -33,7 +35,6 @@ LOCAL_SHARED_LIBRARIES := libhardware libnativewindow
 LOCAL_STATIC_LIBRARIES := liblog libcutils
 
 LOCAL_C_INCLUDES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include \
 	$(EXYNOS_OMX_INC)/khronos \
 	$(EXYNOS_OMX_INC)/exynos \
 	$(EXYNOS_OMX_TOP)/osal \
@@ -42,12 +43,11 @@ LOCAL_C_INCLUDES := \
 	$(EXYNOS_OMX_COMPONENT)/video/enc \
 	$(EXYNOS_OMX_TOP)/video/dec \
 	$(EXYNOS_OMX_TOP)/video/enc \
-	hardware/samsung_slsi/exynos3470/include \
+	hardware/samsung_slsi-cm/exynos3470/include \
 	frameworks/native/include/media/hardware \
 	frameworks/native/include/media/openmax \
-	hardware/samsung_slsi/exynos3470/exynos_omx/codecs/exynos_codecs/video/exynos3/mfc_v4l2/include
+	hardware/samsung_slsi-cm/exynos3470/exynos_omx/codecs/exynos_codecs/video/exynos3/mfc_v4l2/include
 
-LOCAL_ADDITIONAL_DEPENDENCIES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
+LOCAL_HEADER_LIBRARIES := generated_kernel_headers
 
 include $(BUILD_STATIC_LIBRARY)

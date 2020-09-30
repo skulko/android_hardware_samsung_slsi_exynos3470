@@ -14,7 +14,7 @@
 
 ifeq ($(filter-out exynos3,$(TARGET_BOARD_PLATFORM)),)
 
-LOCAL_PATH:= $(call my-dir)
+LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_CLANG_CFLAGS += -Wno-int-conversion
@@ -26,7 +26,6 @@ LOCAL_SHARED_LIBRARIES += libMcClient
 LOCAL_STATIC_LIBRARIES := libsecurepath
 
 LOCAL_C_INCLUDES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include \
 	$(LOCAL_PATH)/../include \
 	$(LOCAL_PATH)/../libexynosutils
 

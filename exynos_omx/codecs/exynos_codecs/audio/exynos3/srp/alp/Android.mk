@@ -9,6 +9,9 @@ LOCAL_C_INCLUDES := \
 
 LOCAL_MODULE := libsrpapi
 
+LOCAL_CFLAGS := \
+        -Wno-unused-parameter
+
 LOCAL_MODULE_TAGS := optional
 
 LOCAL_ARM_MODE := arm

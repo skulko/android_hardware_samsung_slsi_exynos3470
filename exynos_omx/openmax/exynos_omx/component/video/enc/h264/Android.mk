@@ -28,18 +28,16 @@ LOCAL_SHARED_LIBRARIES := libc libdl libcutils libutils liblog libui \
 	libhardware
 
 LOCAL_C_INCLUDES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include \
 	$(EXYNOS_OMX_INC)/khronos \
 	$(EXYNOS_OMX_INC)/exynos \
 	$(EXYNOS_OMX_TOP)/osal \
 	$(EXYNOS_OMX_TOP)/core \
 	$(EXYNOS_OMX_COMPONENT)/common \
 	$(EXYNOS_OMX_COMPONENT)/video/enc \
-	hardware/samsung_slsi/exynos3470/include \
-	hardware/samsung_slsi/exynos3470/libcsc \
-	hardware/samsung_slsi/exynos3470/exynos_omx/codecs/exynos_codecs/video/exynos3/mfc_v4l2/include
+	hardware/samsung_slsi-cm/exynos3470/include \
+	hardware/samsung_slsi-cm/exynos3470/libcsc \
+	hardware/samsung_slsi-cm/exynos3470/exynos_omx/codecs/exynos_codecs/video/exynos3/mfc_v4l2/include
 
-LOCAL_ADDITIONAL_DEPENDENCIES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
+LOCAL_HEADER_LIBRARIES := generated_kernel_headers
 
 include $(BUILD_SHARED_LIBRARY)

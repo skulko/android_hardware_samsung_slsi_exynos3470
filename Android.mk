@@ -31,6 +31,7 @@ exynos3_dirs := \
 #        libcamera2
 ##        mobicore \
 ##        libgscaler \
+##        exynos_omx \
 ##        libhwc \
 ##        libcsc
 

@@ -11,23 +11,25 @@ LOCAL_MODULE := libExynosOMX_Vdec
 LOCAL_ARM_MODE := arm
 LOCAL_MODULE_TAGS := optional
 
+LOCAL_CFLAGS := \
+        -Wno-macro-redefined
+
+
 LOCAL_C_INCLUDES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include \
 	$(EXYNOS_OMX_INC)/khronos \
 	$(EXYNOS_OMX_INC)/exynos \
 	$(EXYNOS_OMX_TOP)/osal \
 	$(EXYNOS_OMX_TOP)/core \
 	$(EXYNOS_OMX_COMPONENT)/common \
 	$(EXYNOS_OMX_COMPONENT)/video/dec \
-	hardware/samsung_slsi/exynos3470/include \
-	hardware/samsung_slsi/exynos3470/libcsc \
-	hardware/samsung_slsi/exynos3470/exynos_omx/codecs/exynos_codecs/video/exynos3/mfc_v4l2/include
+	hardware/samsung_slsi-cm/exynos3470/include \
+	hardware/samsung_slsi-cm/exynos3470/libcsc \
+	hardware/samsung_slsi-cm/exynos3470/exynos_omx/codecs/exynos_codecs/video/exynos3/mfc_v4l2/include
 
-LOCAL_ADDITIONAL_DEPENDENCIES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
+LOCAL_HEADER_LIBRARIES := generated_kernel_headers
 
 ifeq ($(BOARD_USE_ANB), true)
-LOCAL_STATIC_LIBRARIES := libExynosOMX_OSAL libcsc_helper
+LOCAL_STATIC_LIBRARIES := libExynosOMX_OSAL
 LOCAL_CFLAGS += -DUSE_ANB
 endif
 

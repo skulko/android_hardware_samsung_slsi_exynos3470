@@ -11,13 +11,11 @@ LOCAL_SRC_FILES := \
 	enc/src/ExynosVideoEncoder.c
 
 LOCAL_C_INCLUDES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include \
 	$(LOCAL_PATH)/include \
-	hardware/samsung_slsi/exynos3470/include \
-	hardware/samsung_slsi/exynos3470/exynos_omx/openmax/exynos_omx/include/khronos
+	hardware/samsung_slsi-cm/exynos3470/include \
+	hardware/samsung_slsi-cm/exynos3470/exynos_omx/openmax/exynos_omx/include/khronos
 
-LOCAL_ADDITIONAL_DEPENDENCIES := \
-	$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
+LOCAL_HEADER_LIBRARIES := generated_kernel_headers
 
 LOCAL_MODULE := libExynosVideoApi
 LOCAL_MODULE_TAGS := optional
